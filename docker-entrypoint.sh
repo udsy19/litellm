@@ -16,8 +16,10 @@
 #   --admin-agent  the bundled LiteAdmin Slack agent (litellm-admin-agent --web ARGS)
 #
 # gateway and backend get their host and port defaults first, so ARGS such as
-# --port 8080 override them. An unknown first word is executed as-is (docker run
-# <image> sh). PgBouncer is not a component: LITELLM_PGBOUNCER_ENABLED=true
+# --port 8080 override them. With no DATABASE_URL, proxy assembles DATABASE_URL
+# and DATABASE_URL_READ_REPLICA from DATABASE_HOST and the other discrete
+# variables the way gateway and backend do. An unknown first word is executed
+# as-is (docker run <image> sh). PgBouncer is not a component: LITELLM_PGBOUNCER_ENABLED=true
 # starts it inside proxy and gateway. Components that write Prometheus samples
 # start with an empty PROMETHEUS_MULTIPROC_DIR; metrics, collector and raw
 # readers keep the workers' files, other raw commands clear stale samples.
@@ -58,7 +60,14 @@ esac
 
 case "$component" in
     proxy)
-        set -- litellm "$@"
+        if [ -z "${DATABASE_URL:-}" ] && [ -n "${DATABASE_HOST:-}" ]; then
+            set -- python -c 'import os, sys
+from litellm.proxy.db.db_url_settings import DatabaseURLSettings
+DatabaseURLSettings.from_env().apply_to_env()
+os.execvp("litellm", ["litellm", *sys.argv[1:]])' "$@"
+        else
+            set -- litellm "$@"
+        fi
         ;;
     gateway)
         set -- python -m gateway.launch --workers "${NUM_WORKERS:-1}" --host 0.0.0.0 --port 4000 "$@"
